@@ -38,59 +38,68 @@ def extract_video_id(url: str) -> str:
 
 
 def extract_subtitles_transcript_api(video_id: str):
-    """youtube-transcript-api로 자막 추출 (로그인 불필요)"""
-    from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
+    """youtube-transcript-api (v1.x) 로 자막 추출"""
+    from youtube_transcript_api import YouTubeTranscriptApi
+    from youtube_transcript_api._errors import (
+        NoTranscriptFound, TranscriptsDisabled,
+        VideoUnavailable, AgeRestricted, IpBlocked,
+        PoTokenRequired, RequestBlocked, VideoUnplayable,
+    )
 
-    # 언어 우선순위: 영어 > 자동생성 영어 > 나머지
+    api = YouTubeTranscriptApi()
+
+    # 1) 영어 자막 직접 fetch
+    for lang in [["en", "en-US", "en-GB"], ["en"]]:
+        try:
+            fetched = api.fetch(video_id, languages=lang)
+            text = " ".join(snippet.text for snippet in fetched)
+            if text.strip():
+                return text, "en"
+        except (NoTranscriptFound, Exception):
+            continue
+
+    # 2) TranscriptList에서 찾기
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript_list = api.list(video_id)
+        # 수동 영어 자막 우선
+        for t in transcript_list:
+            if t.language_code.startswith("en") and not t.is_generated:
+                fetched = t.fetch()
+                text = " ".join(snippet.text for snippet in fetched)
+                if text.strip():
+                    return text, t.language_code
+        # 자동 생성 영어
+        for t in transcript_list:
+            if t.language_code.startswith("en"):
+                fetched = t.fetch()
+                text = " ".join(snippet.text for snippet in fetched)
+                if text.strip():
+                    return text, t.language_code
+        # 아무 언어나
+        for t in transcript_list:
+            fetched = t.fetch()
+            text = " ".join(snippet.text for snippet in fetched)
+            if text.strip():
+                return text, t.language_code
+    except (AgeRestricted,):
+        raise ValueError("AGE_RESTRICTED")
+    except (IpBlocked, RequestBlocked):
+        raise ValueError("IP_BLOCKED")
+    except (PoTokenRequired,):
+        raise ValueError("IP_BLOCKED")
     except TranscriptsDisabled:
-        raise ValueError("이 영상에는 자막이 비활성화되어 있습니다.")
+        raise ValueError("NO_SUBTITLES")
+    except VideoUnavailable:
+        raise ValueError("VIDEO_UNAVAILABLE")
     except Exception as e:
-        raise ValueError(f"자막 목록을 불러올 수 없습니다: {str(e)}")
+        err = str(e).lower()
+        if "age" in err:
+            raise ValueError("AGE_RESTRICTED")
+        if "ip" in err or "blocked" in err or "robot" in err:
+            raise ValueError("IP_BLOCKED")
+        raise ValueError(f"transcript_api_error: {str(e)}")
 
-    transcript = None
-    lang_used = None
-
-    # 1) 수동 영어 자막
-    try:
-        transcript = transcript_list.find_manually_created_transcript(["en", "en-US", "en-GB"])
-        lang_used = "en"
-    except NoTranscriptFound:
-        pass
-
-    # 2) 자동생성 영어 자막
-    if not transcript:
-        try:
-            transcript = transcript_list.find_generated_transcript(["en", "en-US", "en-GB"])
-            lang_used = "en (auto)"
-        except NoTranscriptFound:
-            pass
-
-    # 3) 한국어 자막 (이미 한국어면 그냥 반환)
-    if not transcript:
-        try:
-            transcript = transcript_list.find_manually_created_transcript(["ko"])
-            lang_used = "ko"
-        except NoTranscriptFound:
-            pass
-
-    # 4) 아무 언어나
-    if not transcript:
-        try:
-            all_transcripts = list(transcript_list)
-            if all_transcripts:
-                transcript = all_transcripts[0]
-                lang_used = transcript.language_code
-        except Exception:
-            pass
-
-    if not transcript:
-        raise ValueError("이 영상에는 사용 가능한 자막이 없습니다.")
-
-    data = transcript.fetch()
-    text = " ".join([entry["text"] for entry in data])
-    return text, lang_used
+    raise ValueError("NO_SUBTITLES")
 
 
 def extract_subtitles_yt_dlp(url: str):
@@ -103,6 +112,9 @@ def extract_subtitles_yt_dlp(url: str):
         "subtitlesformat": "vtt",
         "quiet": True,
         "no_warnings": True,
+        "extractor_args": {
+            "youtube": {"player_client": ["web", "mweb"]}
+        },
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -134,7 +146,7 @@ def extract_subtitles_yt_dlp(url: str):
                 sub_data = all_subs[lang_used]
 
         if not sub_data:
-            raise ValueError("이 영상에는 자막이 없습니다.")
+            raise ValueError("NO_SUBTITLES")
 
         vtt_url = None
         for fmt in sub_data:
@@ -145,7 +157,7 @@ def extract_subtitles_yt_dlp(url: str):
             vtt_url = sub_data[0].get("url")
 
         if not vtt_url:
-            raise ValueError("자막 URL을 찾을 수 없습니다.")
+            raise ValueError("NO_SUBTITLES")
 
         import urllib.request
         with urllib.request.urlopen(vtt_url) as response:
@@ -155,10 +167,8 @@ def extract_subtitles_yt_dlp(url: str):
 
 
 def parse_vtt(vtt_content: str) -> str:
-    """VTT 자막 파일에서 순수 텍스트만 추출"""
     lines = vtt_content.split("\n")
     texts = []
-
     for line in lines:
         line = line.strip()
         if not line or line.startswith("WEBVTT") or line.startswith("NOTE"):
@@ -167,18 +177,13 @@ def parse_vtt(vtt_content: str) -> str:
             continue
         if re.match(r"^\d+$", line):
             continue
-
-        text = re.sub(r"<[^>]+>", "", line)
-        text = text.strip()
-
+        text = re.sub(r"<[^>]+>", "", line).strip()
         if text and text not in texts[-1:]:
             texts.append(text)
-
     return " ".join(texts)
 
 
 def get_video_title(url: str) -> str:
-    """영상 제목만 가져오기"""
     try:
         with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -188,20 +193,17 @@ def get_video_title(url: str) -> str:
 
 
 def translate_with_claude(text: str, title: str) -> dict:
-    """Claude API로 한글 번역"""
     max_chunk = 3000
     chunks = [text[i:i+max_chunk] for i in range(0, len(text), max_chunk)]
-
     translated_parts = []
 
     for chunk in chunks:
         message = client.messages.create(
             model="claude-opus-4-6",
             max_tokens=4096,
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"""다음은 YouTube 영상 "{title}"의 자막입니다.
+            messages=[{
+                "role": "user",
+                "content": f"""다음은 YouTube 영상 "{title}"의 자막입니다.
 이 자막을 자연스럽고 완벽한 한국어로 번역해주세요.
 
 규칙:
@@ -212,8 +214,7 @@ def translate_with_claude(text: str, title: str) -> dict:
 
 자막 원문:
 {chunk}"""
-                }
-            ]
+            }]
         )
         translated_parts.append(message.content[0].text)
 
@@ -246,11 +247,14 @@ async def translate(req: TranslateRequest):
     lang = "en"
     last_error = ""
 
-    # 방법 1: youtube-transcript-api (로그인 불필요, 빠름)
+    # 방법 1: youtube-transcript-api
     try:
         video_id = extract_video_id(url)
         subtitle_text, lang = extract_subtitles_transcript_api(video_id)
         title = get_video_title(url)
+    except ValueError as e:
+        last_error = str(e)
+        subtitle_text = None
     except Exception as e:
         last_error = str(e)
         subtitle_text = None
@@ -260,30 +264,18 @@ async def translate(req: TranslateRequest):
         try:
             subtitle_text, title, lang = extract_subtitles_yt_dlp(url)
         except Exception as e:
-            last_error = str(e)
+            if not last_error:
+                last_error = str(e)
             subtitle_text = None
 
+    # 에러 처리
     if not subtitle_text or len(subtitle_text) < 10:
-        # 에러 메시지 정리
-        if "sign in" in last_error.lower() or "login" in last_error.lower():
-            raise HTTPException(status_code=422, detail="이 영상은 로그인이 필요하거나 자막이 없습니다.")
-        elif "disabled" in last_error.lower():
-            raise HTTPException(status_code=422, detail="이 영상에는 자막이 비활성화되어 있습니다.")
-        elif "unavailable" in last_error.lower():
-            raise HTTPException(status_code=404, detail="영상을 찾을 수 없습니다.")
-        elif "private" in last_error.lower():
-            raise HTTPException(status_code=403, detail="비공개 영상입니다.")
-        else:
-            raise HTTPException(status_code=422, detail="자막을 가져올 수 없습니다. 자막이 없는 영상이거나 접근이 제한된 영상입니다.")
-
-    try:
-        result = translate_with_claude(subtitle_text, title)
-        return {
-            "success": True,
-            "title": result["title"],
-            "translated_text": result["translated_text"],
-            "original_language": lang,
-            "character_count": result["original_length"],
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"번역 중 오류: {str(e)}")
+        if last_error == "AGE_RESTRICTED":
+            raise HTTPException(status_code=422, detail="연령 제한 영상입니다. 자막을 가져올 수 없습니다.")
+        elif last_error == "IP_BLOCKED":
+            raise HTTPException(status_code=422, detail="이 영상의 자막은 서버 IP에서 접근이 제한되어 있습니다. 다른 영상을 시도해보세요.")
+        elif last_error == "NO_SUBTITLES":
+            raise HTTPException(status_code=422, detail="이 영상에는 자막이 없습니다. 자막이 있는 영상만 번역 가능합니다.")
+        elif last_error == "VIDEO_UNAVAILABLE":
+            raise HTTPException(status_code=404, detail="영상을 찾을 수 없습니다. URL을 확인해주세요.")
+        elif "sign in" in last_error.lower() or "
