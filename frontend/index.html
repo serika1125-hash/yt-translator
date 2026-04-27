@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>YouTube íê¸ ìë§ ë²ì­ê¸°</title>
+  <title>YouTube 한글 자막 번역기</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -166,7 +166,7 @@
     }
     .toggle-pw:hover { border-color: #555; color: #ccc; }
 
-    /* ìí íì */
+    /* 상태 표시 */
     #status {
       display: none;
       background: #1a1a1a;
@@ -194,7 +194,7 @@
       font-size: 14px;
     }
 
-    /* ê²°ê³¼ ì¹´ë */
+    /* 결과 카드 */
     #result {
       display: none;
       background: #1a1a1a;
@@ -254,7 +254,7 @@
       word-break: keep-all;
     }
 
-    /* ìë¬ */
+    /* 에러 */
     #error {
       display: none;
       background: #1f1010;
@@ -333,27 +333,27 @@
 <body>
 
 <header>
-  <div class="logo">â¶</div>
-  <h1>YouTube íê¸ ë²ì­ê¸°</h1>
-  <span>ìë§ ìë ë²ì­</span>
+  <div class="logo">▶</div>
+  <h1>YouTube 한글 번역기</h1>
+  <span>자막 자동 번역</span>
 </header>
 
 <main>
   <div class="hero">
-    <h2>ì íë¸ ììì<br /><span>ìë²½í íêµ­ì´</span>ë¡ ë²ì­</h2>
-    <p>YouTube ë§í¬ë¥¼ ë¶ì¬ë£ì¼ë©´ ìë§ì ì¶ì¶í´ íê¸ë¡ ë²ì­í´ëë¦½ëë¤</p>
+    <h2>유튜브 영상을<br /><span>완벽한 한국어</span>로 번역</h2>
+    <p>YouTube 링크를 붙여넣으면 자막을 추출해 한글로 번역해드립니다</p>
   </div>
 
   <div class="input-card">
     <div class="input-row">
       <input type="text" id="urlInput" placeholder="https://www.youtube.com/watch?v=..." />
-      <button id="translateBtn" onclick="doTranslate()">ë²ì­íê¸°</button>
+      <button id="translateBtn" onclick="doTranslate()">번역하기</button>
     </div>
     <div class="api-row">
-      <label>ð ë°±ìë ìë² URL (Railway ë°°í¬ í ìë ¥)</label>
+      <label>🔑 백엔드 서버 URL (Railway 배포 후 입력)</label>
       <div class="api-row-inner">
         <input type="password" id="serverUrl" placeholder="https://your-app.railway.app" />
-        <button class="toggle-pw" onclick="togglePw()">ë³´ê¸°</button>
+        <button class="toggle-pw" onclick="togglePw()">보기</button>
       </div>
     </div>
   </div>
@@ -362,7 +362,7 @@
 
   <div id="status">
     <div class="spinner"></div>
-    <div id="statusText">ìë§ì ì¶ì¶íë ì¤...</div>
+    <div id="statusText">자막을 추출하는 중...</div>
   </div>
 
   <div id="result">
@@ -371,33 +371,33 @@
         <div class="result-title" id="resultTitle"></div>
         <div class="result-meta" id="resultMeta"></div>
       </div>
-      <button class="copy-btn" id="copyBtn" onclick="copyText()">ð ë³µì¬</button>
+      <button class="copy-btn" id="copyBtn" onclick="copyText()">📋 복사</button>
     </div>
     <div class="divider"></div>
     <div class="translated-content" id="translatedText"></div>
   </div>
 
   <div class="how-to">
-    <h3>ì¬ì© ë°©ë²</h3>
+    <h3>사용 방법</h3>
     <div class="steps">
       <div class="step">
         <div class="step-num">1</div>
-        <div class="step-text"><strong>ë°±ìë ìë² ë°°í¬</strong> â Railwayì ìë²ë¥¼ ë°°í¬íê³  URLì ìì ìë ¥íì¸ì (ìµì´ 1í)</div>
+        <div class="step-text"><strong>백엔드 서버 배포</strong> — Railway에 서버를 배포하고 URL을 위에 입력하세요 (최초 1회)</div>
       </div>
       <div class="step">
         <div class="step-num">2</div>
-        <div class="step-text"><strong>YouTube URL ë¶ì¬ë£ê¸°</strong> â ë²ì­í  ìì ë§í¬ë¥¼ ìë ¥ì°½ì ë£ì¼ì¸ì</div>
+        <div class="step-text"><strong>YouTube URL 붙여넣기</strong> — 번역할 영상 링크를 입력창에 넣으세요</div>
       </div>
       <div class="step">
         <div class="step-num">3</div>
-        <div class="step-text"><strong>ë²ì­íê¸° í´ë¦­</strong> â ìë§ì´ ìë ì¶ì¶ëì´ íêµ­ì´ë¡ ë²ì­ë©ëë¤</div>
+        <div class="step-text"><strong>번역하기 클릭</strong> — 자막이 자동 추출되어 한국어로 번역됩니다</div>
       </div>
     </div>
   </div>
 </main>
 
 <footer>
-  Claude APIë¡ ë²ì­ Â· yt-dlpë¡ ìë§ ì¶ì¶ Â· ìë§ì´ ìë ììì ë²ì­ ë¶ê°
+  Claude API로 번역 · yt-dlp로 자막 추출 · 자막이 없는 영상은 번역 불가
 </footer>
 
 <script>
@@ -406,16 +406,16 @@
     const btn = document.querySelector('.toggle-pw');
     if (el.type === 'password') {
       el.type = 'text';
-      btn.textContent = 'ì¨ê¸°ê¸°';
+      btn.textContent = '숨기기';
     } else {
       el.type = 'password';
-      btn.textContent = 'ë³´ê¸°';
+      btn.textContent = '보기';
     }
   }
 
   function showError(msg) {
     const el = document.getElementById('error');
-    el.textContent = 'â ï¸ ' + msg;
+    el.textContent = '⚠️ ' + msg;
     el.style.display = 'block';
   }
 
@@ -441,22 +441,22 @@
     hideError();
 
     if (!url) {
-      showError('YouTube URLì ìë ¥í´ì£¼ì¸ì.');
+      showError('YouTube URL을 입력해주세요.');
       return;
     }
 
     if (!serverUrl) {
-      showError('ë°±ìë ìë² URLì ìë ¥í´ì£¼ì¸ì. (Railway ë°°í¬ í ìë ¥)');
+      showError('백엔드 서버 URL을 입력해주세요. (Railway 배포 후 입력)');
       return;
     }
 
     if (!url.includes('youtube.com') && !url.includes('youtu.be')) {
-      showError('ì¬ë°ë¥¸ YouTube URLì ìë ¥í´ì£¼ì¸ì.');
+      showError('올바른 YouTube URL을 입력해주세요.');
       return;
     }
 
     btn.disabled = true;
-    setStatus('ð YouTube ìë§ì ì¶ì¶íë ì¤...');
+    setStatus('🔍 YouTube 자막을 추출하는 중...');
 
     try {
       const res = await fetch(`${serverUrl}/translate`, {
@@ -467,23 +467,23 @@
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || `ìë² ì¤ë¥ (${res.status})`);
+        throw new Error(data.detail || `서버 오류 (${res.status})`);
       }
 
-      setStatus('â¨ Claude AIê° íê¸ë¡ ë²ì­ ì¤...');
+      setStatus('✨ Claude AI가 한글로 번역 중...');
 
       const data = await res.json();
 
       hideStatus();
       document.getElementById('result').style.display = 'block';
-      document.getElementById('resultTitle').textContent = data.title || 'ë²ì­ ìë£';
+      document.getElementById('resultTitle').textContent = data.title || '번역 완료';
       document.getElementById('resultMeta').textContent =
-        `ìë³¸ ì¸ì´: ${data.original_language || 'ê°ì§ë¨'} Â· ìë¬¸ ${data.character_count?.toLocaleString() || '-'}ì`;
+        `원본 언어: ${data.original_language || '감지됨'} · 원문 ${data.character_count?.toLocaleString() || '-'}자`;
       document.getElementById('translatedText').textContent = data.translated_text;
 
     } catch (err) {
       hideStatus();
-      showError(err.message || 'ë²ì­ ì¤ ì¤ë¥ê° ë°ìíìµëë¤. ë¤ì ìëí´ì£¼ì¸ì.');
+      showError(err.message || '번역 중 오류가 발생했습니다. 다시 시도해주세요.');
     } finally {
       btn.disabled = false;
     }
@@ -493,26 +493,26 @@
     const text = document.getElementById('translatedText').textContent;
     navigator.clipboard.writeText(text).then(() => {
       const btn = document.getElementById('copyBtn');
-      btn.textContent = 'â ë³µì¬ë¨';
+      btn.textContent = '✅ 복사됨';
       btn.classList.add('copied');
       setTimeout(() => {
-        btn.textContent = 'ð ë³µì¬';
+        btn.textContent = '📋 복사';
         btn.classList.remove('copied');
       }, 2000);
     });
   }
 
-  // Enter í¤ë¡ ë²ì­
+  // Enter 키로 번역
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('urlInput').addEventListener('keydown', e => {
       if (e.key === 'Enter') doTranslate();
     });
 
-    // ë¡ì»¬ ì¤í ë¦¬ì§ìì ìë² URL ë³µì
+    // 로컬 스토리지에서 서버 URL 복원
     const saved = localStorage.getItem('ytTranslatorServer');
     if (saved) document.getElementById('serverUrl').value = saved;
 
-    // ìë² URL ë³ê²½ ì ì ì¥
+    // 서버 URL 변경 시 저장
     document.getElementById('serverUrl').addEventListener('change', e => {
       localStorage.setItem('ytTranslatorServer', e.target.value);
     });
