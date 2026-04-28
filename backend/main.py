@@ -5,6 +5,7 @@ import yt_dlp
 import anthropic
 import os
 import re
+import concurrent.futures
 
 app = FastAPI(title="YouTube 한글 자막 번역기")
 
@@ -45,10 +46,7 @@ def extract_subtitles_transcript_api(video_id: str):
         VideoUnavailable, AgeRestricted, IpBlocked,
         PoTokenRequired, RequestBlocked, VideoUnplayable,
     )
-    import httpx
-
-    http_client = httpx.Client(timeout=15.0)
-    api = YouTubeTranscriptApi(http_client=http_client)
+    api = YouTubeTranscriptApi()
 
     # 1) 영어 자막 직접 fetch
     for lang in [["en", "en-US", "en-GB"], ["en"]]:
@@ -238,6 +236,16 @@ def health():
     return {"status": "healthy"}
 
 
+def _run_with_timeout(fn, timeout_sec, *args):
+    """함수를 별도 스레드에서 타임아웃과 함께 실행"""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(fn, *args)
+        try:
+            return future.result(timeout=timeout_sec)
+        except concurrent.futures.TimeoutError:
+            raise ValueError("IP_BLOCKED")
+
+
 @app.post("/translate")
 async def translate(req: TranslateRequest):
     url = req.url.strip()
@@ -250,10 +258,11 @@ async def translate(req: TranslateRequest):
     lang = "en"
     last_error = ""
 
-    # 방법 1: youtube-transcript-api
+    # 방법 1: youtube-transcript-api (20초 타임아웃)
     try:
         video_id = extract_video_id(url)
-        subtitle_text, lang = extract_subtitles_transcript_api(video_id)
+        result = _run_with_timeout(extract_subtitles_transcript_api, 20, video_id)
+        subtitle_text, lang = result
         title = get_video_title(url)
     except ValueError as e:
         last_error = str(e)
@@ -262,10 +271,11 @@ async def translate(req: TranslateRequest):
         last_error = str(e)
         subtitle_text = None
 
-    # 방법 2: yt-dlp fallback
+    # 방법 2: yt-dlp fallback (20초 타임아웃)
     if not subtitle_text:
         try:
-            subtitle_text, title, lang = extract_subtitles_yt_dlp(url)
+            result = _run_with_timeout(extract_subtitles_yt_dlp, 20, url)
+            subtitle_text, title, lang = result
         except Exception as e:
             if not last_error:
                 last_error = str(e)
@@ -285,15 +295,4 @@ async def translate(req: TranslateRequest):
             raise HTTPException(status_code=422, detail="이 영상은 로그인이 필요합니다 (연령 제한 또는 멤버십 전용 영상).")
         elif "private" in last_error.lower():
             raise HTTPException(status_code=403, detail="비공개 영상입니다.")
-        else:
-            raise HTTPException(status_code=422, detail="자막을 가져올 수 없습니다. 자막이 있는 공개 영상 URL을 입력해주세요.")
-
-    try:
-        result = translate_with_claude(subtitle_text, title)
-        return {
-            "success": True,
-            "title": result["title"],
-            "translated_text": result["translated_text"],
-            "original_language": lang,
-            "character_count": result["original_length"],
       
