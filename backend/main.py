@@ -237,13 +237,19 @@ def health():
 
 
 def _run_with_timeout(fn, timeout_sec, *args):
-    """함수를 별도 스레드에서 타임아웃과 함께 실행"""
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(fn, *args)
-        try:
-            return future.result(timeout=timeout_sec)
-        except concurrent.futures.TimeoutError:
-            raise ValueError("IP_BLOCKED")
+    """함수를 별도 스레드에서 타임아웃과 함께 실행 (스레드 대기 없이 종료)"""
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(fn, *args)
+    try:
+        result = future.result(timeout=timeout_sec)
+        executor.shutdown(wait=False)
+        return result
+    except concurrent.futures.TimeoutError:
+        executor.shutdown(wait=False)
+        raise ValueError("IP_BLOCKED")
+    except Exception:
+        executor.shutdown(wait=False)
+        raise
 
 
 @app.post("/translate")
@@ -292,7 +298,4 @@ async def translate(req: TranslateRequest):
         elif last_error == "VIDEO_UNAVAILABLE":
             raise HTTPException(status_code=404, detail="영상을 찾을 수 없습니다. URL을 확인해주세요.")
         elif "sign in" in last_error.lower() or "login" in last_error.lower():
-            raise HTTPException(status_code=422, detail="이 영상은 로그인이 필요합니다 (연령 제한 또는 멤버십 전용 영상).")
-        elif "private" in last_error.lower():
-            raise HTTPException(status_code=403, detail="비공개 영상입니다.")
-      
+            raise HTTPException(status_code=422, detail="이 영상은 로그인이 필요합니다 (연령 
