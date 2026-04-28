@@ -278,4 +278,21 @@ async def translate(req: TranslateRequest):
             raise HTTPException(status_code=422, detail="이 영상에는 자막이 없습니다. 자막이 있는 영상만 번역 가능합니다.")
         elif last_error == "VIDEO_UNAVAILABLE":
             raise HTTPException(status_code=404, detail="영상을 찾을 수 없습니다. URL을 확인해주세요.")
-        elif "sign in" in last_error.lower() or "
+        elif "sign in" in last_error.lower() or "login" in last_error.lower():
+            raise HTTPException(status_code=422, detail="이 영상은 로그인이 필요합니다 (연령 제한 또는 멤버십 전용 영상).")
+        elif "private" in last_error.lower():
+            raise HTTPException(status_code=403, detail="비공개 영상입니다.")
+        else:
+            raise HTTPException(status_code=422, detail="자막을 가져올 수 없습니다. 자막이 있는 공개 영상 URL을 입력해주세요.")
+
+    try:
+        result = translate_with_claude(subtitle_text, title)
+        return {
+            "success": True,
+            "title": result["title"],
+            "translated_text": result["translated_text"],
+            "original_language": lang,
+            "character_count": result["original_length"],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"번역 중 오류: {str(e)}")
