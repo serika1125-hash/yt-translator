@@ -45,8 +45,10 @@ def extract_subtitles_transcript_api(video_id: str):
         VideoUnavailable, AgeRestricted, IpBlocked,
         PoTokenRequired, RequestBlocked, VideoUnplayable,
     )
+    import httpx
 
-    api = YouTubeTranscriptApi()
+    http_client = httpx.Client(timeout=15.0)
+    api = YouTubeTranscriptApi(http_client=http_client)
 
     # 1) 영어 자막 직접 fetch
     for lang in [["en", "en-US", "en-GB"], ["en"]]:
@@ -112,6 +114,7 @@ def extract_subtitles_yt_dlp(url: str):
         "subtitlesformat": "vtt",
         "quiet": True,
         "no_warnings": True,
+        "socket_timeout": 15,
         "extractor_args": {
             "youtube": {"player_client": ["web", "mweb"]}
         },
@@ -293,6 +296,4 @@ async def translate(req: TranslateRequest):
             "translated_text": result["translated_text"],
             "original_language": lang,
             "character_count": result["original_length"],
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"번역 중 오류: {str(e)}")
+      
