@@ -5,14 +5,21 @@ import yt_dlp
 import anthropic
 import os
 import re
+import asyncio
 import httpx
 
-# httpx.Client에 기본 타임아웃 15초 적용 (youtube-transcript-api 포함)
-_orig_httpx_init = httpx.Client.__init__
-def _patched_httpx_init(self, *args, **kwargs):
+# httpx.Client 및 httpx.AsyncClient 모두에 기본 타임아웃 15초 적용
+_orig_httpx_client_init = httpx.Client.__init__
+def _patched_httpx_client_init(self, *args, **kwargs):
     kwargs.setdefault('timeout', 15.0)
-    _orig_httpx_init(self, *args, **kwargs)
-httpx.Client.__init__ = _patched_httpx_init
+    _orig_httpx_client_init(self, *args, **kwargs)
+httpx.Client.__init__ = _patched_httpx_client_init
+
+_orig_httpx_async_client_init = httpx.AsyncClient.__init__
+def _patched_httpx_async_client_init(self, *args, **kwargs):
+    kwargs.setdefault('timeout', 15.0)
+    _orig_httpx_async_client_init(self, *args, **kwargs)
+httpx.AsyncClient.__init__ = _patched_httpx_async_client_init
 
 app = FastAPI(title="YouTube 한글 자막 번역기")
 
@@ -168,7 +175,7 @@ def extract_subtitles_yt_dlp(url: str):
             raise ValueError("NO_SUBTITLES")
 
         import urllib.request
-        with urllib.request.urlopen(vtt_url) as response:
+        with urllib.request.urlopen(vtt_url, timeout=15) as response:
             vtt_content = response.read().decode("utf-8")
 
         return parse_vtt(vtt_content), info.get("title", ""), lang_used
@@ -193,7 +200,7 @@ def parse_vtt(vtt_content: str) -> str:
 
 def get_video_title(url: str) -> str:
     try:
-        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
+        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True, "socket_timeout": 10}) as ydl:
             info = ydl.extract_info(url, download=False)
             return info.get("title", "")
     except Exception:
@@ -243,19 +250,6 @@ def health():
     return {"status": "healthy"}
 
 
-def _run_with_socket_timeout(fn, timeout_sec, *args):
-    """소켓 타임아웃을 설정하고 함수 실행"""
-    import socket
-    old_timeout = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(timeout_sec)
-    try:
-        return fn(*args)
-    except (socket.timeout, TimeoutError, OSError) as e:
-        raise ValueError("IP_BLOCKED")
-    finally:
-        socket.setdefaulttimeout(old_timeout)
-
-
 @app.post("/translate")
 async def translate(req: TranslateRequest):
     url = req.url.strip()
@@ -268,11 +262,26 @@ async def translate(req: TranslateRequest):
     lang = "en"
     last_error = ""
 
-    # 방법 1: youtube-transcript-api (20초 소켓 타임아웃)
+    loop = asyncio.get_event_loop()
+
+    # 방법 1: youtube-transcript-api (asyncio 25초 타임아웃)
     try:
         video_id = extract_video_id(url)
-        subtitle_text, lang = _run_with_socket_timeout(extract_subtitles_transcript_api, 20, video_id)
-        title = get_video_title(url)
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, extract_subtitles_transcript_api, video_id),
+            timeout=25.0
+        )
+        subtitle_text, lang = result
+        try:
+            title = await asyncio.wait_for(
+                loop.run_in_executor(None, get_video_title, url),
+                timeout=15.0
+            )
+        except Exception:
+            title = ""
+    except asyncio.TimeoutError:
+        last_error = "IP_BLOCKED"
+        subtitle_text = None
     except ValueError as e:
         last_error = str(e)
         subtitle_text = None
@@ -280,10 +289,18 @@ async def translate(req: TranslateRequest):
         last_error = str(e)
         subtitle_text = None
 
-    # 방법 2: yt-dlp fallback (20초 소켓 타임아웃)
+    # 방법 2: yt-dlp fallback (asyncio 25초 타임아웃)
     if not subtitle_text:
         try:
-            subtitle_text, title, lang = _run_with_socket_timeout(extract_subtitles_yt_dlp, 20, url)
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, extract_subtitles_yt_dlp, url),
+                timeout=25.0
+            )
+            subtitle_text, title, lang = result
+        except asyncio.TimeoutError:
+            if not last_error:
+                last_error = "IP_BLOCKED"
+            subtitle_text = None
         except Exception as e:
             if not last_error:
                 last_error = str(e)
@@ -294,10 +311,4 @@ async def translate(req: TranslateRequest):
         if last_error == "AGE_RESTRICTED":
             raise HTTPException(status_code=422, detail="연령 제한 영상입니다. 자막을 가져올 수 없습니다.")
         elif last_error == "IP_BLOCKED":
-            raise HTTPException(status_code=422, detail="이 영상의 자막은 서버 IP에서 접근이 제한되어 있습니다. 다른 영상을 시도해보세요.")
-        elif last_error == "NO_SUBTITLES":
-            raise HTTPException(status_code=422, detail="이 영상에는 자막이 없습니다. 자막이 있는 영상만 번역 가능합니다.")
-        elif last_error == "VIDEO_UNAVAILABLE":
-            raise HTTPException(status_code=404, detail="영상을 찾을 수 없습니다. URL을 확인해주세요.")
-        elif "sign in" in last_error.lower() or "login" in last_error.lower():
-            ra
+            raise HTTPExce
