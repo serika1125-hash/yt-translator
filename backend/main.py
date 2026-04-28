@@ -5,6 +5,14 @@ import yt_dlp
 import anthropic
 import os
 import re
+import httpx
+
+# httpx.Client에 기본 타임아웃 15초 적용 (youtube-transcript-api 포함)
+_orig_httpx_init = httpx.Client.__init__
+def _patched_httpx_init(self, *args, **kwargs):
+    kwargs.setdefault('timeout', 15.0)
+    _orig_httpx_init(self, *args, **kwargs)
+httpx.Client.__init__ = _patched_httpx_init
 
 app = FastAPI(title="YouTube 한글 자막 번역기")
 
@@ -292,8 +300,4 @@ async def translate(req: TranslateRequest):
         elif last_error == "VIDEO_UNAVAILABLE":
             raise HTTPException(status_code=404, detail="영상을 찾을 수 없습니다. URL을 확인해주세요.")
         elif "sign in" in last_error.lower() or "login" in last_error.lower():
-            raise HTTPException(status_code=422, detail="이 영상은 로그인이 필요합니다 (연령 제한 또는 멤버십 전용 영상).")
-        elif "private" in last_error.lower():
-            raise HTTPException(status_code=403, detail="비공개 영상입니다.")
-        else:
-            raise HTTPException
+            ra
