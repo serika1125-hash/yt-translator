@@ -5,21 +5,9 @@ import yt_dlp
 import anthropic
 import os
 import re
-import asyncio
-import httpx
-
-# httpx.Client 및 httpx.AsyncClient 모두에 기본 타임아웃 15초 적용
-_orig_httpx_client_init = httpx.Client.__init__
-def _patched_httpx_client_init(self, *args, **kwargs):
-    kwargs.setdefault('timeout', 15.0)
-    _orig_httpx_client_init(self, *args, **kwargs)
-httpx.Client.__init__ = _patched_httpx_client_init
-
-_orig_httpx_async_client_init = httpx.AsyncClient.__init__
-def _patched_httpx_async_client_init(self, *args, **kwargs):
-    kwargs.setdefault('timeout', 15.0)
-    _orig_httpx_async_client_init(self, *args, **kwargs)
-httpx.AsyncClient.__init__ = _patched_httpx_async_client_init
+import subprocess
+import sys
+import json
 
 app = FastAPI(title="YouTube 한글 자막 번역기")
 
@@ -39,7 +27,6 @@ class TranslateRequest(BaseModel):
 
 
 def extract_video_id(url: str) -> str:
-    """YouTube URL에서 video ID 추출"""
     patterns = [
         r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})",
         r"(?:embed/)([A-Za-z0-9_-]{11})",
@@ -52,68 +39,88 @@ def extract_video_id(url: str) -> str:
     raise ValueError("YouTube 영상 ID를 찾을 수 없습니다.")
 
 
-def extract_subtitles_transcript_api(video_id: str):
-    """youtube-transcript-api (v1.x) 로 자막 추출"""
+# subprocess에서 실행할 자막 추출 스크립트
+_TRANSCRIPT_SCRIPT = r"""
+import sys, json
+video_id = sys.argv[1]
+try:
     from youtube_transcript_api import YouTubeTranscriptApi
     from youtube_transcript_api._errors import (
-        NoTranscriptFound, TranscriptsDisabled,
-        VideoUnavailable, AgeRestricted, IpBlocked,
-        PoTokenRequired, RequestBlocked, VideoUnplayable,
+        NoTranscriptFound, TranscriptsDisabled, VideoUnavailable,
+        AgeRestricted, IpBlocked, PoTokenRequired, RequestBlocked
     )
     api = YouTubeTranscriptApi()
 
-    # 1) 영어 자막 직접 fetch
+    # 영어 자막 직접 fetch
     for lang in [["en", "en-US", "en-GB"], ["en"]]:
         try:
             fetched = api.fetch(video_id, languages=lang)
-            text = " ".join(snippet.text for snippet in fetched)
+            text = " ".join(s.text for s in fetched)
             if text.strip():
-                return text, "en"
-        except (NoTranscriptFound, Exception):
+                print(json.dumps({"text": text, "lang": "en"}))
+                sys.exit(0)
+        except Exception:
             continue
 
-    # 2) TranscriptList에서 찾기
+    # TranscriptList에서 찾기
     try:
-        transcript_list = api.list(video_id)
-        # 수동 영어 자막 우선
-        for t in transcript_list:
-            if t.language_code.startswith("en") and not t.is_generated:
+        tlist = api.list(video_id)
+        candidates = []
+        for t in tlist:
+            candidates.append(t)
+        # 영어 수동 우선
+        for t in sorted(candidates, key=lambda x: (not x.language_code.startswith("en"), x.is_generated)):
+            try:
                 fetched = t.fetch()
-                text = " ".join(snippet.text for snippet in fetched)
+                text = " ".join(s.text for s in fetched)
                 if text.strip():
-                    return text, t.language_code
-        # 자동 생성 영어
-        for t in transcript_list:
-            if t.language_code.startswith("en"):
-                fetched = t.fetch()
-                text = " ".join(snippet.text for snippet in fetched)
-                if text.strip():
-                    return text, t.language_code
-        # 아무 언어나
-        for t in transcript_list:
-            fetched = t.fetch()
-            text = " ".join(snippet.text for snippet in fetched)
-            if text.strip():
-                return text, t.language_code
-    except (AgeRestricted,):
-        raise ValueError("AGE_RESTRICTED")
-    except (IpBlocked, RequestBlocked):
-        raise ValueError("IP_BLOCKED")
-    except (PoTokenRequired,):
-        raise ValueError("IP_BLOCKED")
+                    print(json.dumps({"text": text, "lang": t.language_code}))
+                    sys.exit(0)
+            except Exception:
+                continue
+    except AgeRestricted:
+        print(json.dumps({"error": "AGE_RESTRICTED"})); sys.exit(1)
+    except (IpBlocked, RequestBlocked, PoTokenRequired):
+        print(json.dumps({"error": "IP_BLOCKED"})); sys.exit(1)
     except TranscriptsDisabled:
-        raise ValueError("NO_SUBTITLES")
+        print(json.dumps({"error": "NO_SUBTITLES"})); sys.exit(1)
     except VideoUnavailable:
-        raise ValueError("VIDEO_UNAVAILABLE")
+        print(json.dumps({"error": "VIDEO_UNAVAILABLE"})); sys.exit(1)
     except Exception as e:
         err = str(e).lower()
         if "age" in err:
-            raise ValueError("AGE_RESTRICTED")
+            print(json.dumps({"error": "AGE_RESTRICTED"})); sys.exit(1)
         if "ip" in err or "blocked" in err or "robot" in err:
-            raise ValueError("IP_BLOCKED")
-        raise ValueError(f"transcript_api_error: {str(e)}")
+            print(json.dumps({"error": "IP_BLOCKED"})); sys.exit(1)
+        print(json.dumps({"error": str(e)})); sys.exit(1)
 
-    raise ValueError("NO_SUBTITLES")
+    print(json.dumps({"error": "NO_SUBTITLES"}))
+    sys.exit(1)
+except Exception as e:
+    print(json.dumps({"error": str(e)}))
+    sys.exit(1)
+"""
+
+
+def extract_subtitles_transcript_api(video_id: str, timeout: int = 22):
+    """subprocess로 자막 추출 (타임아웃 시 프로세스 강제 종료 가능)"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", _TRANSCRIPT_SCRIPT, video_id],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        stdout = result.stdout.strip()
+        if not stdout:
+            stderr = result.stderr.strip()
+            raise ValueError(f"subprocess_error: {stderr[:300]}")
+        data = json.loads(stdout)
+        if "error" in data:
+            raise ValueError(data["error"])
+        return data["text"], data["lang"]
+    except subprocess.TimeoutExpired:
+        raise ValueError("IP_BLOCKED")
 
 
 def extract_subtitles_yt_dlp(url: str):
@@ -262,26 +269,14 @@ async def translate(req: TranslateRequest):
     lang = "en"
     last_error = ""
 
-    loop = asyncio.get_event_loop()
-
-    # 방법 1: youtube-transcript-api (asyncio 25초 타임아웃)
+    # 방법 1: youtube-transcript-api (subprocess 22초 타임아웃 - 프로세스 강제 종료 가능)
     try:
         video_id = extract_video_id(url)
-        result = await asyncio.wait_for(
-            loop.run_in_executor(None, extract_subtitles_transcript_api, video_id),
-            timeout=25.0
-        )
-        subtitle_text, lang = result
+        subtitle_text, lang = extract_subtitles_transcript_api(video_id, timeout=22)
         try:
-            title = await asyncio.wait_for(
-                loop.run_in_executor(None, get_video_title, url),
-                timeout=15.0
-            )
+            title = get_video_title(url)
         except Exception:
             title = ""
-    except asyncio.TimeoutError:
-        last_error = "IP_BLOCKED"
-        subtitle_text = None
     except ValueError as e:
         last_error = str(e)
         subtitle_text = None
@@ -289,18 +284,10 @@ async def translate(req: TranslateRequest):
         last_error = str(e)
         subtitle_text = None
 
-    # 방법 2: yt-dlp fallback (asyncio 25초 타임아웃)
+    # 방법 2: yt-dlp fallback (socket_timeout=15으로 자체 처리)
     if not subtitle_text:
         try:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, extract_subtitles_yt_dlp, url),
-                timeout=25.0
-            )
-            subtitle_text, title, lang = result
-        except asyncio.TimeoutError:
-            if not last_error:
-                last_error = "IP_BLOCKED"
-            subtitle_text = None
+            subtitle_text, title, lang = extract_subtitles_yt_dlp(url)
         except Exception as e:
             if not last_error:
                 last_error = str(e)
@@ -311,4 +298,10 @@ async def translate(req: TranslateRequest):
         if last_error == "AGE_RESTRICTED":
             raise HTTPException(status_code=422, detail="연령 제한 영상입니다. 자막을 가져올 수 없습니다.")
         elif last_error == "IP_BLOCKED":
-            raise HTTPExce
+            raise HTTPException(status_code=422, detail="이 영상의 자막은 서버 IP에서 접근이 제한되어 있습니다. 다른 영상을 시도해보세요.")
+        elif last_error == "NO_SUBTITLES":
+            raise HTTPException(status_code=422, detail="이 영상에는 자막이 없습니다. 자막이 있는 영상만 번역 가능합니다.")
+        elif last_error == "VIDEO_UNAVAILABLE":
+            raise HTTPException(status_code=404, detail="영상을 찾을 수 없습니다. URL을 확인해주세요.")
+        elif "sign in" in last_error.lower() or "login" in last_error.lower():
+     
